@@ -1,0 +1,7 @@
+{
+	"valid_extension": "jpeg",
+	"enforced_dimm": "270,480,3",
+	"cropped_dimm": "270,270,3",
+	"sample_dimm": "80,80,3",
+	"train_ratio": 0.7
+}

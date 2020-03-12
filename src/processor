@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+import os
+import json
+import random
+import re
+import numpy as np
+import cv2
+
+class ImageProcessor(object):
+    """ImageProcessor class"""
+    def __init__(self, config):
+        '''Initiate ImageProcessor class
+        Attributes:
+            input_path (str): input_path to original image files.
+            output_path (str): output directory after images are processed.
+            valid_exts (str): valid image extension.
+            enforced_dimm (tuple): dimmension after enforced.
+            cropped_dimm (tuple): dimmension after croped.
+            sample_dimm (tuple): dimmension of sample. 
+            train_ratio (float): training split proportion
+        '''
+        self.input_path = '/opt/input'
+        self.output_path = '/opt/output'
+        if not os.path.isdir(self.output_path):
+            os.makedirs(self.output_path)
+        self.valid_ext = config.get("valid_ext", "jpeg")
+        self.enforced_dimm = tuple(int(x) for x in config.get("enforced_dimm").split(','))
+        self.cropped_dimm = tuple(int(x) for x in config.get("cropped_dimm").split(','))
+        self.sample_dimm = tuple(int(x) for x in config.get("sample_dimm").split(','))
+        self.train_ratio = config.get("train_ratio", 0.5)
+
+    def list_images(self):
+        '''List images in specific path with specifict ext
+        Returns:
+            list: The list of image filepaths with valid extension.
+        '''
+        # Loop over the input directory structure
+        for (root_dir, _, fnames) in os.walk(self.input_path):
+            if isinstance(self.valid_ext, str):
+                is_valid = lambda fname: fname.endswith(self.valid_ext)
+            # Construct the path to the file
+            image_paths = [os.path.join(root_dir, fname) for fname in sorted(fnames) if is_valid(fname)]
+        return image_paths
+
+    def read_images(self, image_paths):
+        '''Read images from image_paths
+        Args:
+            image_paths (list or iterator): iterator of input_path to source image files.
+        Returns:
+            images: Iterator of image matrix.
+        '''
+        images = map(lambda image_path: cv2.imread(image_path), image_paths)
+        return images
+
+    def enforce_image_size(self, images):
+        '''Enforce dimmension constrain to an image 
+        Args:
+            images (iterator): Iterator of source images.
+        Returns:
+            enforced_images: Iterator of image matrix with the size of enforced_dimm. 
+        '''
+        enforced_images = map(lambda image: image if image.shape == self.enforced_dimm else cv2.resize(image, self.enforced_dimm[:2]), images)
+        return enforced_images
+
+    def crop_image_central(self, enforced_images):
+        '''Crop images with specific dimension from center
+        Args:
+            enforced_images (iterator): Iterator of enforced images.
+        Returns:
+            cropped_images: Iterator of image matrix with the size of cropped_dimm.
+        '''
+        d0_min, d1_min =  (self.enforced_dimm[0]-self.cropped_dimm[0])//2, (self.enforced_dimm[1]-self.cropped_dimm[1])//2
+        d0_max, d1_max = d0_min + self.cropped_dimm[0], d1_min + self.cropped_dimm[1]
+        cropped_images = map(lambda image: image[d0_min:d0_max, d1_min:d1_max, :], enforced_images)
+        return cropped_images
+
+    def __pick_samples(self, image, path, n=3):
+        '''Randomly extract 3 samples that do not overlap with dimm sample_dimm from a cropped_image
+        Args:
+            image (np.array): cropped image matrix.
+            path (list): input_path to original image files.
+            n (int): number of samples picked.
+        Returns:
+            list_samples (list): list of 3 tuples (filename, index, image samples).
+        '''
+        i_0 = random.randrange(self.cropped_dimm[0] % self.sample_dimm[0])
+        j_0 = random.randrange(self.cropped_dimm[1] % self.sample_dimm[1])
+        n_i = self.cropped_dimm[0] // self.sample_dimm[0]
+        n_j = self.cropped_dimm[1] // self.sample_dimm[1]
+
+        initial_points = [(i_0 + i*self.sample_dimm[0], j_0 + j*self.sample_dimm[1]) for i in range(n_i) for j in range(n_j)]
+        sample_points = random.sample(initial_points, n)
+        random_samples = [image[i:i+self.sample_dimm[0],j:j+self.sample_dimm[1]] for (i,j) in sample_points]
+        list_samples = list(zip([re.search(r'\/(.*)\.jpeg', path).group(1)]*3, range(n), random_samples))
+        return list_samples
+
+    def extract_image_samples(self, cropped_images, image_paths):
+        '''Randomly extract 3 samples that do not overlap with dimm sample_dimm of cropped_images 
+        Args:
+            cropped_images (iterator): Iterator of cropped image matrix.
+            image_paths (list): list of input_path to original image files.
+        Returns:
+            sampled_images: list of (list) image samples.
+        '''
+        sampled_images = [self.__pick_samples(image, path) for path, image in zip(image_paths, cropped_images)]
+        return sampled_images
+
+    def shuffle_split_samples(self, sampled_images):
+        '''Shuffle and split image samples into train and test set
+        Args:
+            sampled_images (list): list of (list) image samples.
+        Returns:
+            train: image samples belongs to training set
+            test: image samples belongs to test set
+        '''
+        X = np.array(sampled_images)
+        np.random.shuffle(X)
+        n = int(self.train_ratio * len(X))
+        train, test = np.concatenate(X[:n]), np.concatenate(X[n:])
+        return train, test
+
+    def save_output(self, sample_split, directory):
+        '''Save splitted samples to output directory
+        Args:
+            sample_split (list): splitted list of (list) image samples.
+            directory(str): directory name to save the samples
+        '''
+        path = os.path.join(self.output_path, directory)
+        if not os.path.isdir(path):
+            os.makedirs(path)
+        for sample in sample_split:
+            fpath = os.path.join(path, '{}_{}.{}'.format(sample[0], sample[1], self.valid_ext))
+            print(fpath, sample[2].shape)
+            cv2.imwrite(fpath, sample[2])
+
+    def run(self):
+        image_paths = self.list_images()
+        images = self.read_images(image_paths)
+        enforced_images = self.enforce_image_size(images)
+        cropped_images = self.crop_image_central(enforced_images)
+        list_samples = self.extract_image_samples(cropped_images, image_paths)
+        train, test = self.shuffle_split_samples(list_samples)
+        self.save_output(train, 'train')
+        self.save_output(test, 'test')
+
+if __name__ == "__main__":
+    with open('/opt/config/config.json') as json_file:
+        config = json.load(json_file)
+    ip = ImageProcessor(config)
+    ip.run()
