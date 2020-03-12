@@ -8,5 +8,7 @@ RUN apt-get update && \
   
 RUN pip install opencv-python==4.2.0.32
 
+ENV PATH="/opt/program:${PATH}"
+
 COPY src /opt/program
 WORKDIR /opt/program
