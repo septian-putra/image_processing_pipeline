@@ -91,7 +91,7 @@ class ImageProcessor(object):
         initial_points = [(i_0 + i*self.sample_dimm[0], j_0 + j*self.sample_dimm[1]) for i in range(n_i) for j in range(n_j)]
         sample_points = random.sample(initial_points, n)
         random_samples = [image[i:i+self.sample_dimm[0],j:j+self.sample_dimm[1]] for (i,j) in sample_points]
-        list_samples = list(zip([re.search(r'\/(.*)\.jpeg', path).group(1)]*3, range(n), random_samples))
+        list_samples = list(zip([re.search(self.input_path+'\/(.*)\.'+self.valid_ext, path).group(1)]*3, range(n), random_samples))
         return list_samples
 
     def extract_image_samples(self, cropped_images, image_paths):
